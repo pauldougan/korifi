@@ -60,15 +60,6 @@ func NewCFBuildReconciler(client CFClient, scheme *runtime.Scheme, log logr.Logg
 //+kubebuilder:rbac:groups=korifi.cloudfoundry.org,resources=buildworkloads,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=korifi.cloudfoundry.org,resources=buildworkloads/status,verbs=get
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the CFBuild object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
 func (r *CFBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	cfBuild := new(korifiv1alpha1.CFBuild)
 	err := r.Client.Get(ctx, req.NamespacedName, cfBuild)
@@ -245,6 +236,25 @@ func (r *CFBuildReconciler) prepareEnvironment(ctx context.Context, cfApp *korif
 			Value: v,
 		})
 	}
+
+	if cfApp.Status.VCAPServicesSecret.Name == "" {
+		err := fmt.Errorf("failed to get VCAP service secret name")
+		r.Log.Error(err, "failed to get VCAP service secret name")
+		return nil, err
+	}
+
+	vcapServicesEnv := corev1.EnvVar{
+		Name: "VCAP_SERVICES",
+		ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: cfApp.Status.VCAPServicesSecret.Name,
+				},
+				Key: "VCAP_SERVICES",
+			},
+		},
+	}
+	imageEnvironment = append(imageEnvironment, vcapServicesEnv)
 
 	return imageEnvironment, nil
 }

@@ -7,18 +7,17 @@ import (
 
 	korifiv1alpha1 "code.cloudfoundry.org/korifi/controllers/api/v1alpha1"
 	"code.cloudfoundry.org/korifi/controllers/controllers/services"
-
-	"k8s.io/apimachinery/pkg/types"
-
-	. "github.com/onsi/gomega/gstruct"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-
 	. "code.cloudfoundry.org/korifi/controllers/controllers/workloads/testutils"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	. "github.com/onsi/gomega/gstruct"
 	servicebindingv1beta1 "github.com/servicebinding/service-binding-controller/apis/v1beta1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var _ = Describe("CFServiceBinding", func() {
@@ -36,6 +35,38 @@ var _ = Describe("CFServiceBinding", func() {
 		desiredCFApp = BuildCFAppCRObject(cfAppGUID, namespace.Name)
 		Expect(
 			k8sClient.Create(context.Background(), desiredCFApp),
+		).To(Succeed())
+
+		vcapServicesData := map[string]string{
+			"VCAP_SERVICES": "{}",
+		}
+		vcapSecretName := cfAppGUID + "vcap-services"
+		vcapServicesSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      vcapSecretName,
+				Namespace: namespace.Name,
+			},
+			StringData: vcapServicesData,
+		}
+		Expect(
+			k8sClient.Create(context.Background(), vcapServicesSecret),
+		).To(Succeed())
+
+		originalApp := desiredCFApp.DeepCopy()
+		desiredCFApp.Status = korifiv1alpha1.CFAppStatus{
+			Conditions:           nil,
+			ObservedDesiredState: korifiv1alpha1.StoppedState,
+			VCAPServicesSecret: corev1.LocalObjectReference{
+				Name: vcapSecretName,
+			},
+		}
+		meta.SetStatusCondition(&desiredCFApp.Status.Conditions, metav1.Condition{
+			Type:   "Ready",
+			Status: metav1.ConditionTrue,
+			Reason: "testing",
+		})
+		Expect(
+			k8sClient.Status().Patch(context.Background(), desiredCFApp, client.MergeFrom(originalApp)),
 		).To(Succeed())
 	})
 
@@ -178,6 +209,34 @@ var _ = Describe("CFServiceBinding", func() {
 						}),
 					}),
 				}))
+			})
+
+			It("eventually updates the vcap services secret of the referenced cf app", func() {
+				ctx := context.Background()
+				vcapServicesSecretLookupKey := types.NamespacedName{Name: desiredCFApp.Status.VCAPServicesSecret.Name, Namespace: namespace.Name}
+				updatedSecret := new(corev1.Secret)
+				Eventually(func() []byte {
+					Expect(
+						k8sClient.Get(ctx, vcapServicesSecretLookupKey, updatedSecret),
+					).To(Succeed())
+					return updatedSecret.Data["VCAP_SERVICES"]
+				}).WithTimeout(time.Second * 5).Should(MatchJSON(fmt.Sprintf(`{
+					"user-provided": [{
+						"label":            "user-provided",
+						"name":             "service-instance-name",
+						"tags":             [],
+						"instance_guid":    "service-instance-guid",
+						"instance_name":    "service-instance-name",
+						"binding_guid":     "%[1]s",
+						"binding_name":     null,
+						"credentials":      {
+							 "provider": "cloud-aws",
+							 "type": "mongodb"
+						},
+						"syslog_drain_url": null,
+						"volume_mounts": []}
+					]}`, cfServiceBindingGUID,
+				)))
 			})
 		})
 

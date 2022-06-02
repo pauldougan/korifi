@@ -8,10 +8,10 @@ import (
 	korifiv1alpha1 "code.cloudfoundry.org/korifi/controllers/api/v1alpha1"
 	"code.cloudfoundry.org/korifi/controllers/controllers/shared"
 	"code.cloudfoundry.org/korifi/controllers/controllers/workloads"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type vcapServicesPresenter struct {
@@ -50,22 +50,42 @@ func (b *Builder) BuildEnv(ctx context.Context, cfApp *korifiv1alpha1.CFApp) (ma
 		return nil, fmt.Errorf("error when trying to fetch app env Secret %s/%s: %w", cfApp.Namespace, cfApp.Spec.EnvSecretName, err)
 	}
 
-	vcapServices, err := buildVcapServicesEnvValue(ctx, b.client, cfApp)
+	return fromSecret(&appEnvSecret), nil
+}
+
+func (b *Builder) BuildVcapServicesEnvValue(ctx context.Context, cfApp *korifiv1alpha1.CFApp) (string, error) {
+	serviceBindings := &korifiv1alpha1.CFServiceBindingList{}
+	err := b.client.List(ctx, serviceBindings,
+		client.InNamespace(cfApp.Namespace),
+		client.MatchingFields{shared.IndexServiceBindingAppGUID: cfApp.Name},
+	)
 	if err != nil {
-		return nil, err
+		return "", fmt.Errorf("error listing CFServiceBindings: %w", err)
 	}
 
-	updatedSecret := appEnvSecret.DeepCopy()
-	if updatedSecret.Data == nil {
-		updatedSecret.Data = map[string][]byte{}
-	}
-	updatedSecret.Data["VCAP_SERVICES"] = []byte(vcapServices)
-	err = b.client.Patch(ctx, updatedSecret, client.MergeFrom(&appEnvSecret))
-	if err != nil {
-		return nil, fmt.Errorf("failed to patch app env secret: %w", err)
+	if len(serviceBindings.Items) == 0 {
+		return "{}", nil
 	}
 
-	return fromSecret(updatedSecret), nil
+	serviceEnvs := []serviceDetails{}
+	for _, currentServiceBinding := range serviceBindings.Items {
+		var serviceEnv serviceDetails
+		serviceEnv, err = buildSingleServiceEnv(ctx, b.client, currentServiceBinding)
+		if err != nil {
+			return "", err
+		}
+
+		serviceEnvs = append(serviceEnvs, serviceEnv)
+	}
+
+	toReturn, err := json.Marshal(vcapServicesPresenter{
+		UserProvided: serviceEnvs,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return string(toReturn), nil
 }
 
 func fromSecret(secret *corev1.Secret) map[string]string {
@@ -109,41 +129,6 @@ func fromServiceBinding(
 		SyslogDrainURL: nil,
 		VolumeMounts:   []string{},
 	}
-}
-
-func buildVcapServicesEnvValue(ctx context.Context, k8sClient workloads.CFClient, cfApp *korifiv1alpha1.CFApp) (string, error) {
-	serviceBindings := &korifiv1alpha1.CFServiceBindingList{}
-	err := k8sClient.List(ctx, serviceBindings,
-		client.InNamespace(cfApp.Namespace),
-		client.MatchingFields{shared.IndexServiceBindingAppGUID: cfApp.Name},
-	)
-	if err != nil {
-		return "", fmt.Errorf("error listing CFServiceBindings: %w", err)
-	}
-
-	if len(serviceBindings.Items) == 0 {
-		return "{}", nil
-	}
-
-	serviceEnvs := []serviceDetails{}
-	for _, currentServiceBinding := range serviceBindings.Items {
-		var serviceEnv serviceDetails
-		serviceEnv, err = buildSingleServiceEnv(ctx, k8sClient, currentServiceBinding)
-		if err != nil {
-			return "", err
-		}
-
-		serviceEnvs = append(serviceEnvs, serviceEnv)
-	}
-
-	toReturn, err := json.Marshal(vcapServicesPresenter{
-		UserProvided: serviceEnvs,
-	})
-	if err != nil {
-		return "", err
-	}
-
-	return string(toReturn), nil
 }
 
 func buildSingleServiceEnv(ctx context.Context, k8sClient workloads.CFClient, serviceBinding korifiv1alpha1.CFServiceBinding) (serviceDetails, error) {

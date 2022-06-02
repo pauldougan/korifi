@@ -54,6 +54,9 @@ type CFAppStatus struct {
 	Conditions []metav1.Condition `json:"conditions"`
 
 	ObservedDesiredState DesiredState `json:"observedDesiredState"`
+
+	// VCAPServicesSecret contains a reference to the CFApp's VCAP_SERVICES secret
+	VCAPServicesSecret v1.LocalObjectReference `json:"vcapServicesSecretName"`
 }
 
 //+kubebuilder:object:root=true
