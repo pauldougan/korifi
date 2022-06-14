@@ -44,6 +44,7 @@ import (
 //counterfeiter:generate -o fake -fake-name EnvBuilder . EnvBuilder
 type EnvBuilder interface {
 	BuildEnv(ctx context.Context, cfApp *korifiv1alpha1.CFApp) (map[string]string, error)
+	BuildVcapServicesEnvValue(ctx context.Context, cfApp *korifiv1alpha1.CFApp) (string, error)
 }
 
 // CFProcessReconciler reconciles a CFProcess object
@@ -126,6 +127,12 @@ func (r *CFProcessReconciler) createOrPatchLRP(ctx context.Context, cfApp *korif
 	}
 
 	envVars, err := r.EnvBuilder.BuildEnv(ctx, cfApp)
+	if err != nil {
+		r.Log.Error(err, "error when trying build the process environment for app: %s/%s", cfProcess.Namespace, cfApp.Spec.DisplayName)
+		return err
+	}
+	// TODO: Do we need a unit test to make sure we're calling this helper correctly?
+	envVars["VCAP_SERVICES"], err = r.EnvBuilder.BuildVcapServicesEnvValue(ctx, cfApp)
 	if err != nil {
 		r.Log.Error(err, "error when trying build the process environment for app: %s/%s", cfProcess.Namespace, cfApp.Spec.DisplayName)
 		return err
