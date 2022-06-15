@@ -9,3 +9,8 @@ spec:
   - image: gcr.io/paketo-buildpacks/ruby
   - image: gcr.io/paketo-buildpacks/procfile
   - image: gcr.io/paketo-buildpacks/go
+  - image: gcr.io/paketo-buildpacks/python
+  - image: gcr.io/paketo-buildpacks/nginx
+  - image: gcr.io/paketo-buildpacks/php
+  - image: gcr.io/paketo-buildpacks/web-servers
+
